@@ -16,8 +16,6 @@ type Service struct {
 	certificates *certificate.Service
 	now          func() time.Time
 	issueMu      sync.Mutex
-	blindViewMu  sync.Mutex
-	blindViews   map[string][]domain.AnnotationSubmission
 }
 
 func NewService(repository *persistence.Repository, certificates *certificate.Service) *Service {
@@ -25,7 +23,6 @@ func NewService(repository *persistence.Repository, certificates *certificate.Se
 		repository:   repository,
 		certificates: certificates,
 		now:          time.Now,
-		blindViews:   make(map[string][]domain.AnnotationSubmission),
 	}
 }
 
