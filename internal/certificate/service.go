@@ -41,18 +41,20 @@ func (s *Service) Issue(batchID, issuerID string, manifest *domain.DatasetManife
 	if manifest.BatchID != batchID {
 		return domain.ReleaseCredential{}, domain.NewError(domain.CodeInvalid, "清单批次不匹配")
 	}
-	sort.Slice(existing, func(i, j int) bool { return existing[i].Sequence < existing[j].Sequence })
+	items := append([]domain.ReleaseCredential(nil), existing...)
+	sort.Slice(items, func(i, j int) bool { return items[i].Sequence < items[j].Sequence })
 	sequence, previous := int64(1), ""
-	if len(existing) > 0 {
-		sequence = existing[len(existing)-1].Sequence + 1
-		previous = existing[len(existing)-1].CredentialDigest
+	if len(items) > 0 {
+		sequence = items[len(items)-1].Sequence + 1
+		previous = items[len(items)-1].CredentialDigest
 	}
-	if cachedSequence, cachedDigest, ok := s.cachedChainHead(); ok {
+	if cachedSequence, cachedDigest, ok := s.cachedChainHead(); ok && cachedSequence > int64(len(items)) {
 		sequence = cachedSequence + 1
 		previous = cachedDigest
 	}
 	credential := domain.ReleaseCredential{BatchID: batchID, Sequence: sequence, ManifestDigest: manifest.Digest, PreviousDigest: previous, IssuerID: issuerID, IssuedAt: now.UTC()}
 	credential.CredentialDigest = digestCredential(credential)
 	credential.CredentialID = fmt.Sprintf("credential-%06d-%s", sequence, credential.CredentialDigest[:12])
+	s.rememberChainHead(sequence, credential.CredentialDigest)
 	return credential, nil
 }
