@@ -40,6 +40,21 @@ func (c WriteContext) Validate(roles ...string) error {
 	return domain.NewError(domain.CodeForbidden, "角色 %s 无权执行此操作", c.Role)
 }
 
+// CheckCanceled reports whether the request context has been canceled.
+// It is used both as a pre-check before entering the repository commit
+// path and as a re-check after acquiring the commit lock, so that a
+// request canceled while queued on the commit lock does not persist
+// events, snapshots or aggregate mutations.
+func (c WriteContext) CheckCanceled() error {
+	if c.RequestContext == nil {
+		return nil
+	}
+	if err := c.RequestContext.Err(); err != nil {
+		return domain.NewError(domain.CodeCanceled, "请求上下文已结束: %v", err)
+	}
+	return nil
+}
+
 type CreateBatchInput struct {
 	BatchID                string    `json:"batchID"`
 	SurveySite             string    `json:"surveySite"`

@@ -101,6 +101,8 @@ func writeError(writer http.ResponseWriter, request *http.Request, err error) {
 		status = http.StatusForbidden
 	case domain.CodeInvalidState, domain.CodeFrozen, domain.CodeGateBlocked:
 		status = http.StatusUnprocessableEntity
+	case domain.CodeCanceled:
+		status = 499 // Client Closed Request (nginx convention)
 	}
 	message := "服务器内部错误"
 	var details any

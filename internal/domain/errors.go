@@ -12,6 +12,7 @@ const (
 	CodeForbidden    ErrorCode = "forbidden"
 	CodeFrozen       ErrorCode = "batch_frozen"
 	CodeGateBlocked  ErrorCode = "release_gate_blocked"
+	CodeCanceled     ErrorCode = "request_canceled"
 )
 
 type Error struct {

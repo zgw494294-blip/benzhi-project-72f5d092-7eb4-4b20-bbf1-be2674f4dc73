@@ -23,7 +23,7 @@ func (s *Service) AddClips(batchID string, input BulkAddClipsInput, context Writ
 	for index, item := range input.Clips {
 		clips[index] = domain.RecordingClip{ClipID: item.ClipID, SourceName: item.SourceName, DurationMillis: item.DurationMillis, ContentDigest: item.ContentDigest, CaptureTimestamp: item.CaptureTimestamp, AuthorizationConfirmed: item.AuthorizationConfirmed, HumanVoiceDetected: item.HumanVoiceDetected, RedactionNote: item.RedactionNote}
 	}
-	result, err := s.repository.UpdateAtomic(batchID, context.ExpectedVersion, "clips.bulk_registered", context.IdempotencyKey, context.ActorID, context.Role, s.now(), func(batch *domain.ReviewBatch) (persistence.MutationMetadata, error) {
+	result, err := s.repository.UpdateAtomicWithContext(context.RequestContext, batchID, context.ExpectedVersion, "clips.bulk_registered", context.IdempotencyKey, context.ActorID, context.Role, s.now(), func(batch *domain.ReviewBatch) (persistence.MutationMetadata, error) {
 		registered, inner := batch.RegisterClips(clips, s.now())
 		if inner != nil {
 			return persistence.MutationMetadata{}, inner
@@ -54,7 +54,7 @@ func (s *Service) AdjudicateConflicts(batchID string, input BulkConflictDecision
 	if err := context.Validate(RoleReviewer); err != nil {
 		return BulkAdjudicationResult{}, err
 	}
-	result, err := s.repository.UpdateAtomic(batchID, context.ExpectedVersion, "conflicts.bulk_adjudicated", context.IdempotencyKey, context.ActorID, context.Role, s.now(), func(batch *domain.ReviewBatch) (persistence.MutationMetadata, error) {
+	result, err := s.repository.UpdateAtomicWithContext(context.RequestContext, batchID, context.ExpectedVersion, "conflicts.bulk_adjudicated", context.IdempotencyKey, context.ActorID, context.Role, s.now(), func(batch *domain.ReviewBatch) (persistence.MutationMetadata, error) {
 		decisions, inner := batch.AdjudicateConflicts(input.Decisions, context.ActorID, s.now())
 		if inner != nil {
 			return persistence.MutationMetadata{}, inner
@@ -88,7 +88,7 @@ func (s *Service) RemediateGate(batchID string, input GateRemediationsInput, con
 	if err := context.Validate(RoleAdministrator, RoleReviewer); err != nil {
 		return GateRemediationResult{}, err
 	}
-	result, err := s.repository.UpdateAtomic(batchID, context.ExpectedVersion, "release_gate.bulk_remediated", context.IdempotencyKey, context.ActorID, context.Role, s.now(), func(batch *domain.ReviewBatch) (persistence.MutationMetadata, error) {
+	result, err := s.repository.UpdateAtomicWithContext(context.RequestContext, batchID, context.ExpectedVersion, "release_gate.bulk_remediated", context.IdempotencyKey, context.ActorID, context.Role, s.now(), func(batch *domain.ReviewBatch) (persistence.MutationMetadata, error) {
 		before := batch.CheckReleaseGate()
 		outcome, inner := batch.RemediateGate(input.Remediations, s.now())
 		if inner != nil {

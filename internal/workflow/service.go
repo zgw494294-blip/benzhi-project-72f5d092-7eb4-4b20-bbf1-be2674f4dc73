@@ -3,7 +3,6 @@ package workflow
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"sync"
 	"time"
 
@@ -30,11 +29,14 @@ func (s *Service) CreateBatch(input CreateBatchInput, context WriteContext) (*do
 	if context.ExpectedVersion != 0 {
 		return nil, false, domain.NewError(domain.CodeConflict, "创建批次的 expectedVersion 必须为 0")
 	}
+	if err := context.CheckCanceled(); err != nil {
+		return nil, false, err
+	}
 	batch, err := domain.NewBatch(input.BatchID, input.SurveySite, input.CaptureWindowStart, input.CaptureWindowEnd, input.AuthorizationStatement, s.now())
 	if err != nil {
 		return nil, false, err
 	}
-	result, err := s.repository.Create(batch, "batch.created", context.IdempotencyKey, context.ActorID, context.Role, s.now())
+	result, err := s.repository.CreateWithContext(context.RequestContext, batch, "batch.created", context.IdempotencyKey, context.ActorID, context.Role, s.now())
 	if err != nil {
 		return nil, false, err
 	}
@@ -95,12 +97,10 @@ func (s *Service) ResolveConflict(batchID, conflictID string, input ResolveConfl
 }
 
 func (s *Service) update(batchID string, context WriteContext, operation string, mutate func(*domain.ReviewBatch) error) (*domain.ReviewBatch, bool, error) {
-	if context.RequestContext != nil {
-		if err := context.RequestContext.Err(); err != nil {
-			return nil, false, fmt.Errorf("请求上下文已结束: %w", err)
-		}
+	if err := context.CheckCanceled(); err != nil {
+		return nil, false, err
 	}
-	result, err := s.repository.Update(batchID, context.ExpectedVersion, operation, context.IdempotencyKey, context.ActorID, context.Role, s.now(), mutate)
+	result, err := s.repository.UpdateWithContext(context.RequestContext, batchID, context.ExpectedVersion, operation, context.IdempotencyKey, context.ActorID, context.Role, s.now(), mutate)
 	if err != nil {
 		return nil, false, err
 	}

@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -116,7 +117,14 @@ func (r *Repository) recover() (int64, error) {
 }
 
 func (r *Repository) Create(batch *domain.ReviewBatch, operation, key, actorID, actorRole string, at time.Time) (CommitResult, error) {
-	return r.commit(batch.BatchID, 0, operation, key, actorID, actorRole, at, func(current *domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error) {
+	return r.CreateWithContext(context.Background(), batch, operation, key, actorID, actorRole, at)
+}
+
+// CreateWithContext behaves like Create but re-checks the request context
+// after acquiring the commit lock so a request canceled while queued on
+// the lock does not persist a new batch.
+func (r *Repository) CreateWithContext(ctx context.Context, batch *domain.ReviewBatch, operation, key, actorID, actorRole string, at time.Time) (CommitResult, error) {
+	return r.commit(ctx, batch.BatchID, 0, operation, key, actorID, actorRole, at, func(current *domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error) {
 		if current != nil {
 			return nil, MutationMetadata{}, domain.NewError(domain.CodeInvalid, "批次已存在")
 		}
@@ -131,8 +139,25 @@ func (r *Repository) Update(batchID string, expectedVersion int64, operation, ke
 	})
 }
 
+// UpdateWithContext behaves like Update but re-checks the request context
+// after acquiring the commit lock so a request canceled while queued on
+// the lock does not persist events, snapshots or aggregate mutations.
+func (r *Repository) UpdateWithContext(ctx context.Context, batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, mutate func(*domain.ReviewBatch) error) (CommitResult, error) {
+	return r.UpdateAtomicWithContext(ctx, batchID, expectedVersion, operation, key, actorID, actorRole, at, func(batch *domain.ReviewBatch) (MutationMetadata, error) {
+		return MutationMetadata{}, mutate(batch)
+	})
+}
+
 func (r *Repository) UpdateAtomic(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, mutate func(*domain.ReviewBatch) (MutationMetadata, error)) (CommitResult, error) {
-	return r.commit(batchID, expectedVersion, operation, key, actorID, actorRole, at, func(current *domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error) {
+	return r.UpdateAtomicWithContext(context.Background(), batchID, expectedVersion, operation, key, actorID, actorRole, at, mutate)
+}
+
+// UpdateAtomicWithContext behaves like UpdateAtomic but re-checks the
+// request context after acquiring the commit lock so a request canceled
+// while queued on the lock does not persist events, snapshots or
+// aggregate mutations.
+func (r *Repository) UpdateAtomicWithContext(ctx context.Context, batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, mutate func(*domain.ReviewBatch) (MutationMetadata, error)) (CommitResult, error) {
+	return r.commit(ctx, batchID, expectedVersion, operation, key, actorID, actorRole, at, func(current *domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error) {
 		if current == nil {
 			return nil, MutationMetadata{}, domain.NewError(domain.CodeNotFound, "批次不存在")
 		}
@@ -148,9 +173,14 @@ func (r *Repository) UpdateAtomic(batchID string, expectedVersion int64, operati
 	})
 }
 
-func (r *Repository) commit(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, apply func(*domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error)) (CommitResult, error) {
+func (r *Repository) commit(ctx context.Context, batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, apply func(*domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error)) (CommitResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return CommitResult{}, domain.NewError(domain.CodeCanceled, "请求上下文已结束: %v", err)
+		}
+	}
 	if key == "" {
 		return CommitResult{}, domain.NewError(domain.CodeInvalid, "idempotencyKey 不能为空")
 	}
