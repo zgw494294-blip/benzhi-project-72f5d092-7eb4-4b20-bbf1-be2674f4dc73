@@ -23,6 +23,7 @@ func (s *Service) AddClips(batchID string, input BulkAddClipsInput, context Writ
 	for index, item := range input.Clips {
 		clips[index] = domain.RecordingClip{ClipID: item.ClipID, SourceName: item.SourceName, DurationMillis: item.DurationMillis, ContentDigest: item.ContentDigest, CaptureTimestamp: item.CaptureTimestamp, AuthorizationConfirmed: item.AuthorizationConfirmed, HumanVoiceDetected: item.HumanVoiceDetected, RedactionNote: item.RedactionNote}
 	}
+	fingerprint := idempotencyFingerprint(methodForOperation("clips.bulk_registered"), resourcePath(batchID, "clips", "bulk"), context.ActorID, context.Role, contentHash(input))
 	result, err := s.repository.UpdateAtomic(batchID, context.ExpectedVersion, "clips.bulk_registered", context.IdempotencyKey, context.ActorID, context.Role, s.now(), func(batch *domain.ReviewBatch) (persistence.MutationMetadata, error) {
 		registered, inner := batch.RegisterClips(clips, s.now())
 		if inner != nil {
@@ -33,7 +34,7 @@ func (s *Service) AddClips(batchID string, input BulkAddClipsInput, context Writ
 			clipIDs[index] = registered[index].ClipID
 		}
 		return persistence.MutationMetadata{Result: registered, AuditDetails: map[string]any{"count": len(registered), "clipIDs": clipIDs}}, nil
-	})
+	}, fingerprint)
 	if err != nil {
 		return BulkClipResult{}, err
 	}
@@ -54,6 +55,7 @@ func (s *Service) AdjudicateConflicts(batchID string, input BulkConflictDecision
 	if err := context.Validate(RoleReviewer); err != nil {
 		return BulkAdjudicationResult{}, err
 	}
+	fingerprint := idempotencyFingerprint(methodForOperation("conflicts.bulk_adjudicated"), resourcePath(batchID, "conflicts", "decisions"), context.ActorID, context.Role, contentHash(input))
 	result, err := s.repository.UpdateAtomic(batchID, context.ExpectedVersion, "conflicts.bulk_adjudicated", context.IdempotencyKey, context.ActorID, context.Role, s.now(), func(batch *domain.ReviewBatch) (persistence.MutationMetadata, error) {
 		decisions, inner := batch.AdjudicateConflicts(input.Decisions, context.ActorID, s.now())
 		if inner != nil {
@@ -64,7 +66,7 @@ func (s *Service) AdjudicateConflicts(batchID string, input BulkConflictDecision
 			summaries[index] = map[string]any{"conflictID": item.ConflictID, "clipID": item.ClipID, "decision": item.Decision, "status": item.Status}
 		}
 		return persistence.MutationMetadata{Result: decisions, AuditDetails: map[string]any{"count": len(decisions), "decisions": summaries}}, nil
-	})
+	}, fingerprint)
 	if err != nil {
 		return BulkAdjudicationResult{}, err
 	}
@@ -88,6 +90,7 @@ func (s *Service) RemediateGate(batchID string, input GateRemediationsInput, con
 	if err := context.Validate(RoleAdministrator, RoleReviewer); err != nil {
 		return GateRemediationResult{}, err
 	}
+	fingerprint := idempotencyFingerprint(methodForOperation("release_gate.bulk_remediated"), resourcePath(batchID, "release-gate", "remediations"), context.ActorID, context.Role, contentHash(input))
 	result, err := s.repository.UpdateAtomic(batchID, context.ExpectedVersion, "release_gate.bulk_remediated", context.IdempotencyKey, context.ActorID, context.Role, s.now(), func(batch *domain.ReviewBatch) (persistence.MutationMetadata, error) {
 		before := batch.CheckReleaseGate()
 		outcome, inner := batch.RemediateGate(input.Remediations, s.now())
@@ -110,7 +113,7 @@ func (s *Service) RemediateGate(batchID string, input GateRemediationsInput, con
 			auditItems = append(auditItems, map[string]any{"clipID": clipID, "reasonCodes": codesByClip[clipID]})
 		}
 		return persistence.MutationMetadata{Result: outcome, AuditDetails: map[string]any{"count": len(clipIDs), "remediations": auditItems}}, nil
-	})
+	}, fingerprint)
 	if err != nil {
 		return GateRemediationResult{}, err
 	}

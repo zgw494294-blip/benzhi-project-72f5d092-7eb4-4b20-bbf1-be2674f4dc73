@@ -33,7 +33,8 @@ func (s *Service) CreateBatch(input CreateBatchInput, context WriteContext) (*do
 	if err != nil {
 		return nil, false, err
 	}
-	result, err := s.repository.Create(batch, "batch.created", context.IdempotencyKey, context.ActorID, context.Role, s.now())
+	fingerprint := idempotencyFingerprint(methodForOperation("batch.created"), resourcePath("review-batches", input.BatchID), context.ActorID, context.Role, contentHash(input))
+	result, err := s.repository.Create(batch, "batch.created", context.IdempotencyKey, context.ActorID, context.Role, s.now(), fingerprint)
 	if err != nil {
 		return nil, false, err
 	}
@@ -45,21 +46,21 @@ func (s *Service) AddClip(batchID string, input AddClipInput, context WriteConte
 		return nil, false, err
 	}
 	clip := domain.RecordingClip{ClipID: input.ClipID, SourceName: input.SourceName, DurationMillis: input.DurationMillis, ContentDigest: input.ContentDigest, CaptureTimestamp: input.CaptureTimestamp, AuthorizationConfirmed: input.AuthorizationConfirmed, HumanVoiceDetected: input.HumanVoiceDetected, RedactionNote: input.RedactionNote}
-	return s.update(batchID, context, "clip.registered", func(batch *domain.ReviewBatch) error { return batch.AddClip(clip, s.now()) })
+	return s.update(batchID, context, "clip.registered", resourcePath(batchID, "clips", input.ClipID), input, func(batch *domain.ReviewBatch) error { return batch.AddClip(clip, s.now()) })
 }
 
 func (s *Service) StartAnnotation(batchID string, context WriteContext) (*domain.ReviewBatch, bool, error) {
 	if err := context.Validate(RoleAdministrator); err != nil {
 		return nil, false, err
 	}
-	return s.update(batchID, context, "annotation.started", func(batch *domain.ReviewBatch) error { return batch.StartAnnotation(s.now()) })
+	return s.update(batchID, context, "annotation.started", resourcePath(batchID, "start-annotation"), nil, func(batch *domain.ReviewBatch) error { return batch.StartAnnotation(s.now()) })
 }
 
 func (s *Service) UpdatePrivacy(batchID, clipID string, input PrivacyInput, context WriteContext) (*domain.ReviewBatch, bool, error) {
 	if err := context.Validate(RoleAdministrator, RoleReviewer); err != nil {
 		return nil, false, err
 	}
-	return s.update(batchID, context, "clip.privacy_updated", func(batch *domain.ReviewBatch) error {
+	return s.update(batchID, context, "clip.privacy_updated", resourcePath(batchID, "clips", clipID, "privacy"), input, func(batch *domain.ReviewBatch) error {
 		return batch.UpdateClipPrivacy(clipID, input.AuthorizationConfirmed, input.HumanVoiceDetected, input.RedactionNote, s.now())
 	})
 }
@@ -70,7 +71,7 @@ func (s *Service) SubmitAnnotation(batchID string, input AnnotationInput, contex
 	}
 	submission := domain.AnnotationSubmission{SubmissionID: newID("submission"), ClipID: input.ClipID, Round: input.Round, AnnotatorID: context.ActorID, SpeciesLabel: input.SpeciesLabel, StartMillis: input.StartMillis, EndMillis: input.EndMillis, Confidence: input.Confidence, EvidenceNote: input.EvidenceNote, Revision: input.Revision}
 	var conflict *domain.ConflictCase
-	batch, replay, err := s.update(batchID, context, "annotation.submitted", func(batch *domain.ReviewBatch) error {
+	batch, replay, err := s.update(batchID, context, "annotation.submitted", resourcePath(batchID, "annotations", input.ClipID), input, func(batch *domain.ReviewBatch) error {
 		var inner error
 		conflict, inner = batch.SubmitAnnotation(submission, s.now())
 		return inner
@@ -88,13 +89,14 @@ func (s *Service) ResolveConflict(batchID, conflictID string, input ResolveConfl
 	if err := context.Validate(RoleReviewer); err != nil {
 		return nil, false, err
 	}
-	return s.update(batchID, context, "conflict.resolved", func(batch *domain.ReviewBatch) error {
+	return s.update(batchID, context, "conflict.resolved", resourcePath(batchID, "conflicts", conflictID, "decisions"), input, func(batch *domain.ReviewBatch) error {
 		return batch.ResolveConflict(conflictID, input.Decision, input.ResolvedLabel, context.ActorID, input.ResolutionNote, s.now())
 	})
 }
 
-func (s *Service) update(batchID string, context WriteContext, operation string, mutate func(*domain.ReviewBatch) error) (*domain.ReviewBatch, bool, error) {
-	result, err := s.repository.Update(batchID, context.ExpectedVersion, operation, context.IdempotencyKey, context.ActorID, context.Role, s.now(), mutate)
+func (s *Service) update(batchID string, context WriteContext, operation, resource string, content any, mutate func(*domain.ReviewBatch) error) (*domain.ReviewBatch, bool, error) {
+	fingerprint := idempotencyFingerprint(methodForOperation(operation), resource, context.ActorID, context.Role, contentHash(content))
+	result, err := s.repository.Update(batchID, context.ExpectedVersion, operation, context.IdempotencyKey, context.ActorID, context.Role, s.now(), mutate, fingerprint)
 	if err != nil {
 		return nil, false, err
 	}

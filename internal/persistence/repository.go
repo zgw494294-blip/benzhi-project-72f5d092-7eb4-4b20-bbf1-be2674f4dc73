@@ -115,8 +115,8 @@ func (r *Repository) recover() (int64, error) {
 	return validBytes, nil
 }
 
-func (r *Repository) Create(batch *domain.ReviewBatch, operation, key, actorID, actorRole string, at time.Time) (CommitResult, error) {
-	return r.commit(batch.BatchID, 0, operation, key, actorID, actorRole, at, func(current *domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error) {
+func (r *Repository) Create(batch *domain.ReviewBatch, operation, key, actorID, actorRole string, at time.Time, fingerprint ...Fingerprint) (CommitResult, error) {
+	return r.commit(batch.BatchID, 0, operation, key, actorID, actorRole, at, firstFingerprint(fingerprint), func(current *domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error) {
 		if current != nil {
 			return nil, MutationMetadata{}, domain.NewError(domain.CodeInvalid, "批次已存在")
 		}
@@ -125,14 +125,14 @@ func (r *Repository) Create(batch *domain.ReviewBatch, operation, key, actorID, 
 	})
 }
 
-func (r *Repository) Update(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, mutate func(*domain.ReviewBatch) error) (CommitResult, error) {
+func (r *Repository) Update(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, mutate func(*domain.ReviewBatch) error, fingerprint ...Fingerprint) (CommitResult, error) {
 	return r.UpdateAtomic(batchID, expectedVersion, operation, key, actorID, actorRole, at, func(batch *domain.ReviewBatch) (MutationMetadata, error) {
 		return MutationMetadata{}, mutate(batch)
-	})
+	}, fingerprint...)
 }
 
-func (r *Repository) UpdateAtomic(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, mutate func(*domain.ReviewBatch) (MutationMetadata, error)) (CommitResult, error) {
-	return r.commit(batchID, expectedVersion, operation, key, actorID, actorRole, at, func(current *domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error) {
+func (r *Repository) UpdateAtomic(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, mutate func(*domain.ReviewBatch) (MutationMetadata, error), fingerprint ...Fingerprint) (CommitResult, error) {
+	return r.commit(batchID, expectedVersion, operation, key, actorID, actorRole, at, firstFingerprint(fingerprint), func(current *domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error) {
 		if current == nil {
 			return nil, MutationMetadata{}, domain.NewError(domain.CodeNotFound, "批次不存在")
 		}
@@ -148,7 +148,7 @@ func (r *Repository) UpdateAtomic(batchID string, expectedVersion int64, operati
 	})
 }
 
-func (r *Repository) commit(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, apply func(*domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error)) (CommitResult, error) {
+func (r *Repository) commit(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, fingerprint Fingerprint, apply func(*domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error)) (CommitResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if key == "" {
@@ -158,6 +158,9 @@ func (r *Repository) commit(batchID string, expectedVersion int64, operation, ke
 	if existing, ok := r.idempotency[index]; ok {
 		if existing.Operation != operation {
 			return CommitResult{}, domain.NewError(domain.CodeInvalid, "idempotencyKey 已用于其他操作")
+		}
+		if fingerprint.present && !fingerprint.matches(existing) {
+			return CommitResult{}, domain.NewError(domain.CodeConflict, "idempotencyKey 已用于不同的请求内容")
 		}
 		var result CommitResult
 		if err := json.Unmarshal(existing.Result, &result); err != nil {
@@ -192,7 +195,7 @@ func (r *Repository) commit(batchID string, expectedVersion int64, operation, ke
 	if err != nil {
 		return CommitResult{}, err
 	}
-	record := IdempotentRecord{Key: key, BatchID: batchID, Operation: operation, Result: resultBytes, CreatedAt: at.UTC()}
+	record := IdempotentRecord{Key: key, BatchID: batchID, Operation: operation, Method: fingerprint.method, Resource: fingerprint.resource, ActorID: fingerprint.actorID, ActorRole: fingerprint.actorRole, RequestHash: fingerprint.requestHash, Result: resultBytes, CreatedAt: at.UTC()}
 	payload := logPayload{SchemaVersion: schemaVersion, Batch: next, Audit: audit, Idempotency: record}
 	frame, err := makeFrame(r.lastSequence+1, r.lastDigest, payload)
 	if err != nil {

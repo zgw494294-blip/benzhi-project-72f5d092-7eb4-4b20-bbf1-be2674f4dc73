@@ -27,7 +27,7 @@ func (s *Service) Freeze(batchID string, context WriteContext) (*domain.ReviewBa
 	if err := context.Validate(RoleReviewer); err != nil {
 		return nil, false, err
 	}
-	return s.update(batchID, context, "batch.frozen", func(batch *domain.ReviewBatch) error { _, err := batch.Freeze(s.now()); return err })
+	return s.update(batchID, context, "batch.frozen", resourcePath(batchID, "freeze"), nil, func(batch *domain.ReviewBatch) error { _, err := batch.Freeze(s.now()); return err })
 }
 
 func (s *Service) Issue(batchID string, input IssueInput, context WriteContext) (*domain.ReviewBatch, bool, error) {
@@ -40,7 +40,7 @@ func (s *Service) Issue(batchID string, input IssueInput, context WriteContext) 
 	s.issueMu.Lock()
 	defer s.issueMu.Unlock()
 	credentials := s.repository.Credentials()
-	return s.update(batchID, context, "credential.issued", func(batch *domain.ReviewBatch) error {
+	return s.update(batchID, context, "credential.issued", resourcePath(batchID, "credentials"), input, func(batch *domain.ReviewBatch) error {
 		if batch.Status == domain.StatusReleased && batch.Credential != nil {
 			return nil
 		}

@@ -22,11 +22,16 @@ type MutationMetadata struct {
 }
 
 type IdempotentRecord struct {
-	Key       string          `json:"key"`
-	BatchID   string          `json:"batchID"`
-	Operation string          `json:"operation"`
-	Result    json.RawMessage `json:"result"`
-	CreatedAt time.Time       `json:"createdAt"`
+	Key         string          `json:"key"`
+	BatchID     string          `json:"batchID"`
+	Operation   string          `json:"operation"`
+	Method      string          `json:"method,omitempty"`
+	Resource    string          `json:"resource,omitempty"`
+	ActorID     string          `json:"actorID,omitempty"`
+	ActorRole   string          `json:"actorRole,omitempty"`
+	RequestHash string          `json:"requestHash,omitempty"`
+	Result      json.RawMessage `json:"result"`
+	CreatedAt   time.Time       `json:"createdAt"`
 }
 
 type logPayload struct {
