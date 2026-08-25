@@ -126,12 +126,6 @@ func (r *Repository) Create(batch *domain.ReviewBatch, operation, key, actorID, 
 }
 
 func (r *Repository) Update(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, mutate func(*domain.ReviewBatch) error) (CommitResult, error) {
-	return r.UpdateAtomic(batchID, expectedVersion, operation, key, actorID, actorRole, at, func(batch *domain.ReviewBatch) (MutationMetadata, error) {
-		return MutationMetadata{}, mutate(batch)
-	})
-}
-
-func (r *Repository) UpdateAtomic(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, mutate func(*domain.ReviewBatch) (MutationMetadata, error)) (CommitResult, error) {
 	return r.commit(batchID, expectedVersion, operation, key, actorID, actorRole, at, func(current *domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error) {
 		if current == nil {
 			return nil, MutationMetadata{}, domain.NewError(domain.CodeNotFound, "批次不存在")
@@ -140,12 +134,61 @@ func (r *Repository) UpdateAtomic(batchID string, expectedVersion int64, operati
 		if err != nil {
 			return nil, MutationMetadata{}, err
 		}
-		metadata, err := mutate(working)
-		if err != nil {
+		if err = mutate(working); err != nil {
 			return nil, MutationMetadata{}, err
 		}
-		return working, metadata, nil
+		return working, MutationMetadata{}, nil
 	})
+}
+
+func (r *Repository) UpdateAtomic(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, mutate func(*domain.ReviewBatch) (MutationMetadata, error)) (CommitResult, error) {
+	working, replay, err := r.prepareAtomic(batchID, expectedVersion, operation, key)
+	if err != nil || replay != nil {
+		if replay == nil {
+			return CommitResult{}, err
+		}
+		return *replay, nil
+	}
+	metadata, err := mutate(working)
+	if err != nil {
+		return CommitResult{}, err
+	}
+	return r.commitPrepared(batchID, operation, key, actorID, actorRole, at, working, metadata)
+}
+
+func (r *Repository) prepareAtomic(batchID string, expectedVersion int64, operation, key string) (*domain.ReviewBatch, *CommitResult, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if key == "" {
+		return nil, nil, domain.NewError(domain.CodeInvalid, "idempotencyKey 不能为空")
+	}
+	index := idempotencyIndex(batchID, key)
+	if existing, ok := r.idempotency[index]; ok {
+		if existing.Operation != operation {
+			return nil, nil, domain.NewError(domain.CodeInvalid, "idempotencyKey 已用于其他操作")
+		}
+		var result CommitResult
+		if err := json.Unmarshal(existing.Result, &result); err != nil {
+			return nil, nil, err
+		}
+		result.Replay = true
+		return nil, &result, nil
+	}
+	current := r.batches[batchID]
+	if current == nil {
+		return nil, nil, domain.NewError(domain.CodeNotFound, "批次不存在")
+	}
+	if current.Version != expectedVersion {
+		return nil, nil, domain.NewError(domain.CodeConflict, "版本冲突：当前 %d，期望 %d", current.Version, expectedVersion)
+	}
+	working, err := cloneBatch(current)
+	return working, nil, err
+}
+
+func (r *Repository) commitPrepared(batchID, operation, key, actorID, actorRole string, at time.Time, next *domain.ReviewBatch, metadata MutationMetadata) (CommitResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.persistLocked(batchID, operation, key, actorID, actorRole, at, next, metadata)
 }
 
 func (r *Repository) commit(batchID string, expectedVersion int64, operation, key, actorID, actorRole string, at time.Time, apply func(*domain.ReviewBatch) (*domain.ReviewBatch, MutationMetadata, error)) (CommitResult, error) {
@@ -177,6 +220,12 @@ func (r *Repository) commit(batchID string, expectedVersion int64, operation, ke
 	if err != nil {
 		return CommitResult{}, err
 	}
+	return r.persistLocked(batchID, operation, key, actorID, actorRole, at, next, metadata)
+}
+
+func (r *Repository) persistLocked(batchID, operation, key, actorID, actorRole string, at time.Time, next *domain.ReviewBatch, metadata MutationMetadata) (CommitResult, error) {
+	index := idempotencyIndex(batchID, key)
+	var err error
 	if err = next.ValidateIntegrity(); err != nil {
 		return CommitResult{}, fmt.Errorf("提交后的批次完整性校验失败: %w", err)
 	}
