@@ -46,6 +46,7 @@ func (s *Service) Verify(chain []domain.ReleaseCredential) VerificationResult {
 		previous = credential.CredentialDigest
 	}
 	result.HeadDigest = previous
+	s.rememberChainHead(int64(len(items)), previous)
 	return result
 }
 

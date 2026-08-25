@@ -4,14 +4,34 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"acoustic-annotation-release/internal/domain"
 )
 
-type Service struct{}
+type Service struct {
+	headMu       sync.RWMutex
+	headCached   bool
+	headSequence int64
+	headDigest   string
+}
 
 func NewService() *Service { return &Service{} }
+
+func (s *Service) cachedChainHead() (int64, string, bool) {
+	s.headMu.RLock()
+	defer s.headMu.RUnlock()
+	return s.headSequence, s.headDigest, s.headCached
+}
+
+func (s *Service) rememberChainHead(sequence int64, digest string) {
+	s.headMu.Lock()
+	defer s.headMu.Unlock()
+	s.headSequence = sequence
+	s.headDigest = digest
+	s.headCached = true
+}
 
 func (s *Service) Issue(batchID, issuerID string, manifest *domain.DatasetManifest, existing []domain.ReleaseCredential, now time.Time) (domain.ReleaseCredential, error) {
 	batchID, issuerID = strings.TrimSpace(batchID), strings.TrimSpace(issuerID)
@@ -26,6 +46,10 @@ func (s *Service) Issue(batchID, issuerID string, manifest *domain.DatasetManife
 	if len(existing) > 0 {
 		sequence = existing[len(existing)-1].Sequence + 1
 		previous = existing[len(existing)-1].CredentialDigest
+	}
+	if cachedSequence, cachedDigest, ok := s.cachedChainHead(); ok {
+		sequence = cachedSequence + 1
+		previous = cachedDigest
 	}
 	credential := domain.ReleaseCredential{BatchID: batchID, Sequence: sequence, ManifestDigest: manifest.Digest, PreviousDigest: previous, IssuerID: issuerID, IssuedAt: now.UTC()}
 	credential.CredentialDigest = digestCredential(credential)
