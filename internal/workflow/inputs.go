@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ type WriteContext struct {
 	Role            string
 	ExpectedVersion int64
 	IdempotencyKey  string
+	RequestContext  context.Context
 }
 
 func (c WriteContext) Validate(roles ...string) error {

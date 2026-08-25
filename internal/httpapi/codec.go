@@ -65,7 +65,7 @@ func parseWriteContext(request *http.Request) (workflow.WriteContext, error) {
 	if err != nil || version < 0 {
 		return workflow.WriteContext{}, newBoundaryError("If-Match-Version 必须是非负整数")
 	}
-	context := workflow.WriteContext{ActorID: actorID, Role: role, ExpectedVersion: version, IdempotencyKey: key}
+	context := workflow.WriteContext{ActorID: actorID, Role: role, ExpectedVersion: version, IdempotencyKey: key, RequestContext: request.Context()}
 	return context, nil
 }
 

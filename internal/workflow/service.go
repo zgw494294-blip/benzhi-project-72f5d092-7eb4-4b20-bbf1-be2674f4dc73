@@ -3,6 +3,7 @@ package workflow
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"sync"
 	"time"
 
@@ -94,6 +95,11 @@ func (s *Service) ResolveConflict(batchID, conflictID string, input ResolveConfl
 }
 
 func (s *Service) update(batchID string, context WriteContext, operation string, mutate func(*domain.ReviewBatch) error) (*domain.ReviewBatch, bool, error) {
+	if context.RequestContext != nil {
+		if err := context.RequestContext.Err(); err != nil {
+			return nil, false, fmt.Errorf("请求上下文已结束: %w", err)
+		}
+	}
 	result, err := s.repository.Update(batchID, context.ExpectedVersion, operation, context.IdempotencyKey, context.ActorID, context.Role, s.now(), mutate)
 	if err != nil {
 		return nil, false, err
