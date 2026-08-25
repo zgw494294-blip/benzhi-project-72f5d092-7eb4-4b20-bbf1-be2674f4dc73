@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"fmt"
+
 	"acoustic-annotation-release/internal/certificate"
 	"acoustic-annotation-release/internal/domain"
 )
@@ -27,7 +29,11 @@ func (s *Service) Freeze(batchID string, context WriteContext) (*domain.ReviewBa
 	if err := context.Validate(RoleReviewer); err != nil {
 		return nil, false, err
 	}
-	return s.update(batchID, context, "batch.frozen", func(batch *domain.ReviewBatch) error { _, err := batch.Freeze(s.now()); return err })
+	batch, replay, err := s.update(batchID, context, "batch.frozen", func(batch *domain.ReviewBatch) error { _, err := batch.Freeze(s.now()); return err })
+	if err != nil {
+		return nil, false, fmt.Errorf("冻结批次 %s 失败: %w", batchID, err)
+	}
+	return batch, replay, nil
 }
 
 func (s *Service) Issue(batchID string, input IssueInput, context WriteContext) (*domain.ReviewBatch, bool, error) {
