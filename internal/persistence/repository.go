@@ -252,14 +252,10 @@ func (r *Repository) snapshotState() snapshot {
 }
 
 func cloneBatch(batch *domain.ReviewBatch) (*domain.ReviewBatch, error) {
-	data, err := json.Marshal(batch)
-	if err != nil {
-		return nil, err
+	if batch == nil {
+		return nil, nil
 	}
-	var cloned domain.ReviewBatch
-	if err = json.Unmarshal(data, &cloned); err != nil {
-		return nil, err
-	}
+	cloned := *batch
 	return &cloned, nil
 }
 
