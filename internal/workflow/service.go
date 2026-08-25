@@ -16,10 +16,17 @@ type Service struct {
 	certificates *certificate.Service
 	now          func() time.Time
 	issueMu      sync.Mutex
+	gateMu       sync.RWMutex
+	gateCache    map[string]GateResult
 }
 
 func NewService(repository *persistence.Repository, certificates *certificate.Service) *Service {
-	return &Service{repository: repository, certificates: certificates, now: time.Now}
+	return &Service{
+		repository:   repository,
+		certificates: certificates,
+		now:          time.Now,
+		gateCache:    make(map[string]GateResult),
+	}
 }
 
 func (s *Service) CreateBatch(input CreateBatchInput, context WriteContext) (*domain.ReviewBatch, bool, error) {

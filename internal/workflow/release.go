@@ -15,12 +15,27 @@ func (s *Service) CheckGate(batchID, role string) (GateResult, error) {
 	if role != RoleReviewer && role != RoleAdministrator {
 		return GateResult{}, domain.NewError(domain.CodeForbidden, "仅管理员或复核人可检查门禁")
 	}
+	s.gateMu.RLock()
+	cached, ok := s.gateCache[batchID]
+	s.gateMu.RUnlock()
+	if ok {
+		return cloneGateResult(cached), nil
+	}
 	batch, err := s.repository.Get(batchID)
 	if err != nil {
 		return GateResult{}, err
 	}
 	blockers := batch.CheckReleaseGate()
-	return GateResult{Passed: len(blockers) == 0, Status: batch.Status, Blockers: blockers}, nil
+	result := GateResult{Passed: len(blockers) == 0, Status: batch.Status, Blockers: blockers}
+	s.gateMu.Lock()
+	s.gateCache[batchID] = cloneGateResult(result)
+	s.gateMu.Unlock()
+	return result, nil
+}
+
+func cloneGateResult(result GateResult) GateResult {
+	result.Blockers = append([]domain.GateBlocker(nil), result.Blockers...)
+	return result
 }
 
 func (s *Service) Freeze(batchID string, context WriteContext) (*domain.ReviewBatch, bool, error) {
