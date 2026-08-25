@@ -44,11 +44,26 @@ func (s *Service) GetBlindSubmissions(batchID, clipID, actorID, role string, rou
 	if role != RoleAnnotator {
 		return nil, domain.NewError(domain.CodeForbidden, "仅标注员可查询盲标任务")
 	}
+	cacheKey := batchID + "\x00" + clipID
+	s.blindViewMu.Lock()
+	if cached, ok := s.blindViews[cacheKey]; ok {
+		items := append([]domain.AnnotationSubmission(nil), cached...)
+		s.blindViewMu.Unlock()
+		return items, nil
+	}
+	s.blindViewMu.Unlock()
 	batch, err := s.repository.Get(batchID)
 	if err != nil {
 		return nil, err
 	}
-	return batch.VisibleSubmissions(clipID, actorID, round)
+	items, err := batch.VisibleSubmissions(clipID, actorID, round)
+	if err != nil {
+		return nil, err
+	}
+	s.blindViewMu.Lock()
+	s.blindViews[cacheKey] = append([]domain.AnnotationSubmission(nil), items...)
+	s.blindViewMu.Unlock()
+	return items, nil
 }
 
 func (s *Service) GetBlindTasks(batchID, actorID, role string, round int, status string) ([]domain.BlindTask, error) {
